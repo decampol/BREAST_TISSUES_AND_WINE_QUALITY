@@ -1,0 +1,537 @@
+---
+title: "Rapport de projet"
+author: "Kathyna CHEKROUN , Lisa DE CAMPOS et Julien VENANT"
+output: 
+  html_document: 
+    toc: yes
+    theme: "flatly"
+    toc_float: yes
+---
+
+# **Sommaire**{.tabset}
+## **Les fonctions**
+
+<center><h4>**Réinitialisation des données**</h4></center>
+
+<br></br>
+
+```{r}
+rm(list=ls()) #Permet de réinitialiser les données à chaque nouveau lancement du code
+```
+
+<br></br>
+
+***
+
+<center><h4>**Appel des librairies**</h4></center>
+
+<br></br>
+
+```{r}
+library(ggplot2)
+library(ggforce)
+library(dplyr)
+library(readr)
+library(MASS)
+```
+***
+
+
+<center><h3>**1.Fonction de remaniement des classes**</h3></center>
+
+<br></br>
+
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Cette fonction est utilisée seulement dans le cas où le jeu de données fourni est sous forme de chaines de caractères (toutes les colonnes).Elle n'est pas à utiliser sur un dataframe possèdant deja des colonnes de type numeric et factor.\  
+  
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;En l'occurence ici, nous avons utilisé la fonction readcsv2() (voir dans la partie résultats et interprétation) qui transforme un fichier csv avec que des chaines de caractères en un tableau de valeurs numériques. 
+
+<br></br>
+
+```{r}
+RemaniementClasses <- function(df)
+{
+  df <- as.data.frame(df)          #On fait en sorte que le jeu de données soit bien un dataframe 
+  for (i in 1 : length(df))
+  {
+    t <- as.numeric(df[1, i])      #On regarde ce que donne la colonne convertie en numeric
+    if(is.na(t))                   #Si on a des NA à la place de chiffres, la colonne est composée de variables 
+                                   #catégorielles.
+      df[,i]<- as.factor(df[,i])   #On convertit en factor
+    else
+      df[,i] <- as.numeric(df[,i]) #Si on a pas de NA, la colonne est bien de classe numeric, donc on la convertit 
+                                   #comme telle.
+  }
+  return(df)
+}
+
+
+```
+
+***
+<center><h3>**2.Fonction d'Analyse Factorielle Discriminante**</h3></center>
+
+<br></br>
+
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Comme expliqué dans la partie "METHODES" de notre cahier des charges, nous effectuons dans un premier temps une analyse factorielle discriminante.
+
+<br></br>
+
+```{r}
+AFD <- function(df)
+{
+  
+  indVarCat <- which(sapply(df, is.factor)) #On récupère l'index de la variable catégorielle.
+  
+  dfColCat <- df[,indVarCat]                #On stocke la colonne contenant la variable catégorielle du dataframe
+  
+  N <- nrow(df)                             #N est le nombre de lignes du dataframe
+  K <- ncol(df)                             #K est le nombre de colonnes du dataframe
+                                       
+  
+  
+  t <- table(dfColCat)/N                    #On regarde la proportion de chaque classe dans le dataframe
+  
+  #*****************************************************
+  ##I- SEQUENCEMENT DE LA PROGRAMMATION DE L'ALGORITHME
+  #*****************************************************
+  
+  #I.1.Matrice des variances-covariances intra (w)
+  #-----------------------------------------------
+  
+  listeDF <- split(df[,-indVarCat], dfColCat)   #On separe le dataframe par classes
+  
+  numClasses <- length(listeDF)                 #On recupere le nombre de classes disponibles
+  
+  ListeCov <- lapply(listeDF, function(x){return(cov(x)*((nrow(x)-1)/nrow(x)))}) 
+                                                #On fait la liste des matrices de covariances
+  
+  
+  W <- matrix(0, ncol= (K-1), nrow = (K-1))
+  
+  for(i in 1 : length(listeDF))
+  {
+    W <- W + t[i]*ListeCov[[i]] 
+  }
+  
+  
+  #I.2. Matrice des variances-covariances totale (TOT)
+  #--------------------------------------------------
+  
+  TOT <- var(df[,-indVarCat])*((N-1)/N)
+  
+  #I.3. Matrice des variances-covariances INTER CLASSE (B)
+  #-------------------------------------------------------
+  B <- TOT - W
+
+
+  #******************************************************************
+  #II.METHODE DE FISHER ET RECHERCHES DES VALEURS ET VECTEURS PROPRES
+  #******************************************************************
+  
+  #Matrice à diagonaliser B*W*^(-1)
+  #--------------------------------
+
+  
+  Bet = (N/2)*B
+  Wet = (N/(N-3))*W
+  MatADiag = Bet%*%solve(Wet)
+  
+  U <- eigen(MatADiag)                       #eigen renvoie une liste de deux éléments : 
+                                             #les vecteurs propres  et valeurs propres 
+                                             #de la matrice
+  
+  Uvec <- U$vectors[, 1:2]                   #On stocke les vecteurs propres
+  Uval <- U$values[1:2]                      #On stocke les valeurs propres
+  norme <- sqrt(diag(aperm(Uvec)%*%W%*%Uvec))
+  VectP <- sweep(Uvec, 2, norme, '/')
+
+
+
+  #*******************************************************
+  #III.METHODE STABLE
+  #*******************************************************
+
+  #III.1.Calcul des valeurs propres et vecteurs propres par méthode numérique stable
+  #---------------------------------------------------------------------------------
+  
+  MoyList <- lapply(listeDF, function(x){return(sapply(x, mean))})    
+                                                         #Calcule la moyenne des observations dans chaque classe 
+  
+  
+  M <- matrix(unlist(MoyList), ncol = K-1, byrow = TRUE) #On transforme la liste en matrice pour pouvoir l'utiliser 
+                                                         #dans les calculs ci-dessous : c'est donc la matrice 
+                                                         #M des centres des classes
+  
+  Uw <- eigen(W)$vectors                                 #On récupère les vecteurs propres de la matrice 
+                                                         #intra-classe W : on obtient donc la 
+                                                         #matrice des vecteurs propres Uw
+  
+  Deltmval <- diag(1/eigen(W)$values)                    #On calcule la matrice diagonale des valeurs propres
+  
+  IW <- -Uw%*%-sqrt(Deltmval)%*%aperm(Uw)                #On calcule Iw, la matrice intra-classe
+  
+  Met <- M%*%IW
+  Bet <- ((N-1)/N)*cov(Met)                              #Bet est l'inertie interclasse pondérée par son degré de liberté
+  VectP <- IW%*%eigen(Bet)$vectors[, 1:2]                #Vecteurs propres 
+  Uval <- eigen(Bet)$values[1:2]                         #Valeurs propres 
+  Uval
+  VectP
+
+
+  #III.2. Coordonnées des individus sur les axes factoriels
+  #--------------------------------------------------------
+
+  Z <- sapply(df[-indVarCat], function(x){return(x-mean(x))})     
+                                                         #On effectue un centrage des données
+  Projection <- -Z%*%VectP                               #Projection des données sur les axes fournis 
+
+  #III.3 Prédiction
+  #----------------
+
+      #III.3.A Calcul de la distance euclidienne
+      #-----------------------------------------
+  
+  X <- as.matrix(df[-indVarCat])                        #x est la matrice des variables numériques du jeu de données
+  
+  MoyMat <- lapply(MoyList, function(x){return(matrix(t(replicate(N,x)), nrow=N, ncol=K-1))}) 
+                                                        #MoyMat est la liste des centres de gravité
+  
+  CentreGravite <- data.frame(u1 = Projection[,1], u2 = Projection[,2], observations = df[,indVarCat])  
+                                                        #On récupère les coordonnées de chaque observation
+  CentreGravite <- aggregate(CentreGravite[,1:2], list(CentreGravite$observations), mean)               
+                                                        #On fait la moyenne de ces coordonnées selon leur classe
+  
+  EUCDist <- matrix(0, N, numClasses)                   #Initialisation de la matrice des distances euclidiennes
+  
+  for(i in 1 : numClasses)                              #Creation de la matrice des distances euclidiennes entre les projections des 
+  {                                                     #observations du jeu de données, et celle des centres de 
+                                                        #gravité des classes.
+    
+    MoyDup <- data.frame(u1 = rep(CentreGravite[i, 2], N), u2 = rep(CentreGravite[i, 3], N)) 
+                                                        #Ducplication des coordonnées des centres de gravité 
+                                                        #pour permettre la soustraction
+    
+    EUCDist[,i] <- sqrt((Projection[,1]-MoyDup[,1])**2 + (Projection[,2]-MoyDup[,2])**2)
+  }                                                     #Calcul de la distance euclidienne
+  EUCDist <- as.data.frame(EUCDist)
+  colnames(EUCDist) <- levels(dfColCat)
+  
+         #III.3.B Sélecion de la distance min et affectation de la classe
+         #---------------------------------------------------------------
+  
+  #Récupération des labels du min : 
+  
+  DFMine <- apply(EUCDist, 1, function(x){names(which.min(x))})        
+                                                        #Donne le libélé de la classe qui est la plus proche 
+                                                        #de la ligne donnée (distance euclidienne minimale)
+  
+         #III.3.C Implémentations des observations et des prédictions dans un dataframe
+         #-----------------------------------------------------------------------------
+  
+  Prediction <- data.frame(DFMine, dfColCat)            #Rassemble la prédiction et les observations de base
+  colnames(Prediction) <- c("pred", "obs")
+  
+         #III.3.C Calcul de la matrice de confusion
+         #-----------------------------------------
+  
+  MatriceConf <- table(Prediction)                      #On calcule la matrice de confusion des données
+  
+   #III.4 Graphique à réaliser de la projection de chaque individu sur les axes factoriels, leur centre de gravité et l'indication de leur mauvaise prédiction
+  #-----------------------------------------------------------------------------------------------------------------
+  
+  #Regroupement des prÃ©dictions mal faites
+  FaussePred <- data.frame(u1 = Projection[,1], u2 = Projection[,2], FalsePred = (Prediction$pred!=Prediction$obs)) 
+                                                        #La dernière colonne décrit si la prédiction est 
+                                                        #corrècte ou non par un booléen
+  FaussePred <- filter(FaussePred, FalsePred == TRUE)   #Filtre des prédictions fausses
+  FaussePred <- FaussePred[-3] 
+  
+ 
+  p <- ggplot(Prediction, aes(Projection[,1], Projection[,2], shape = obs))  
+  p <- p + geom_point(aes(colour = obs)) + labs(y="u2", x="u1") + 
+                                                        #On plot les observations
+    
+    geom_point(data = CentreGravite, aes(u1, u2, colour = Group.1, shape = Group.1), size = 2.5) + 
+                                                        #On plot les centres de gravité
+    
+    geom_vline(xintercept = 0, colour = "grey") + geom_hline(yintercept = 0, colour = "grey") +    
+                                                        #Plot du repère orthonormé
+    
+    geom_circle(data = FaussePred, aes(x0 = u1 , y0 = u2, r = 0.1), inherit.aes = FALSE)           
+                                                        #Plot des cercles entourant les prédictions fausses.
+
+ListResults <- list(centre.gravite = M, classe.predite = DFMine,inertie.intra = W, inertie.inter = B, valeurs.propres = Uval, vecteurs.propres = VectP, coordonees.individus = Projection, matrice.confusion = MatriceConf, graphique = p)                                                                           #Création d'une liste regroupant les résultats
+  
+  return(ListResults)
+}
+```
+***
+
+### **3. Fonction LDA** 
+
+On fait une Linear Discriminant Analysis (LDA).
+
+```{r}
+LDA <- function(df) {
+  
+  indVarCat <- which(sapply(df, is.factor))                 #On récupère l'index de la variable catégorielle.
+  dfColCat <- df[,indVarCat]                                #Récupère la colonne de la variable catégorielle
+  NomVarCat <- colnames(df)[indVarCat]                      #Récupère le nom de la variable catégorielle
+  
+  N <- nrow(df)                                             #Nombre de lignes du jeu de données
+  t <- table(dfColCat)/N                                    #Proportion de chaque classes
+  
+  mylda <- lda(data = df, x = df[,-indVarCat] , grouping = dfColCat, prior = c(t),tol=10e-3) 
+                                                            #Donne le modèle de la LDA
+  Prediction <- predict(mylda)                              #Donne les prédictions de la LDA
+  
+  PredictionTable <- data.frame(Prediction$class, dfColCat) #Dataframe de la prédiction et des observations de base
+  colnames(PredictionTable) <- c("pred", "obs")
+  
+  #MATRICE DE CONFUSION
+  #--------------------
+  
+  MatriceConf <- table(PredictionTable)
+  
+  Listresult <- list(centre.gravite = mylda$means, classe.predite = Prediction$class, probability = Prediction$posterior, matrice.confusion = MatriceConf)
+  return(Listresult)
+}
+
+```
+***
+<center><h3>**4. Fonction Accuracy**</h3></center>
+
+<br></br>
+
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Nous avons décidé de créer cette fonction, afin de calculer le taux de réussite d'un modèle à partir d'une matrice de confusion.
+
+<br></br>
+
+```{r}
+Accuracy <- function(MatConf) {
+  
+  Total <- sum(MatConf)                                            
+  
+  TruePred <- 0
+  
+  for(i in 1 : nrow(MatConf))
+  {
+     TruePred <- TruePred + MatConf[i,i]    #On fait la somme des bonnes prédictions 
+                                            #(sur la diagonale de la matrice de confusion)
+  }
+  return(TruePred/Total)
+}
+```
+***
+
+## **Résultats et interprétations** {.tabset .tabset-pills}
+### **Wine**
+
+<br></br>
+
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;On va à présent afficher et interpréter les résultats obtenus  sur ce jeu de données. Les interprétations se feront au niveau des matrices de confusion et du graphe.
+
+<br></br>
+
+```{r}
+df2 <- read.table("C:/Users/lisad/OneDrive/Documents/E4/FOUILLE DONNEES R/VIN_QUALITE.txt", header = T)
+AnsAFD2 <- AFD(df2)
+AnsLDA2 <- LDA(df2)
+```
+
+<br></br>
+
+```{r}
+message("CENTRE DE GRAVITE AFD")
+AnsAFD2$centre.gravite
+
+
+message("CENTRE DE GRAVITE LDA")
+AnsLDA2$centre.gravite
+```
+
+<br></br>
+
+```{r}
+message("INERTIE INTRA W")
+AnsAFD2$inertie.intra
+
+
+
+message("INERTIE INTER B")
+AnsAFD2$inertie.inter
+
+
+
+message("VALEURS PROPRES")
+AnsAFD2$valeurs.propres
+
+
+
+message("VECTEURS PROPRES")
+AnsAFD2$vecteurs.propres
+
+
+
+message("COORDONNEES DES INDIVIDUS : PROJECTION AFD")
+AnsAFD2$coordonees.individus
+```
+
+<br></br>
+
+```{r}
+message("CLASSE PREDITES AFD")
+AnsAFD2$classe.predite
+  
+
+
+message("CLASSES PREDITES LDA")
+AnsLDA2$classe.predite
+```
+
+<br></br>
+
+```{r}
+message("MATRICE DE CONFUSION AFD")
+AnsAFD2$matrice.confusion
+message("MATRICE DE CONFUSION LDA")
+AnsLDA2$matrice.confusion
+```
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Nous pouvons observer les mêmes résultats entre l'AFD et la LDA. Donc les deux méthodes programmées fonctionnent correctement.\  
+
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Pour un jeu de données bien moins conséquent, les tables de confusion sont les mêmes. On s'aperçoit que les fausses prédictions se font "logiques" : certains bons vins sont prédits comme étants moyens, mais pas du tout mauvais, et inversement pour les mauvais vins. Pour ce qui est des vins moyens, donc entre les mauvais et les bons, la prédiction peut donner un vin bon s'il possède les caractéristiques qui s'en rapprochent, et mauvais si c'est le cas.
+
+<br></br>
+
+```{r}
+message("Taux de reussite AFD :")
+Accuracy(AnsAFD2$matrice.confusion)
+message("Taux de reussite LDA :")
+Accuracy(AnsLDA2$matrice.confusion)
+```
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Les taux de réussite quant à eux sont identiques soit environ 80%. Concernant des données sur le vin un taux de réussite de 80% est satisfaisant.\  
+
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Cela peut cependant s'expliquer par le fait que les variables et classes sont moins nombreuses pour ce jeu.
+
+<br></br>
+
+```{r}
+AnsAFD2$graphique
+```
+
+<br></br>
+
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Comme présenté sur le graphique, les classes, dont leur centre de gravité, sont bien séparées. Les fausses prédictions sont donc peu nombreuses.
+
+
+### **BreastTissue**
+
+<br></br>
+
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;On va à présent afficher et interpréter les résultats obtenus  sur ce jeu de données. Les interprétations se feront au niveau des matrices de confusion et du graphe.
+
+<br></br>
+
+```{r}
+
+df <- read.csv2("C:/Users/lisad/OneDrive/Documents/E4/FOUILLE DONNEES R/BreastTissue.csv", header = T, sep=";", na.strings = '?')
+AnsAFD <- AFD(df)
+AnsLDA <- LDA(df)
+```
+
+<br></br>
+
+```{r}
+message("CENTRE DE GRAVITE AFD")
+AnsAFD$centre.gravite
+
+
+message("CENTRE DE GRAVITE LDA")
+AnsLDA$centre.gravite
+```
+
+<br></br>
+
+```{r}
+message("INERTIE INTRA W")
+AnsAFD$inertie.intra
+
+
+message("INERTIE INTER B")
+AnsAFD$inertie.inter
+
+
+
+message("VALEURS PROPRES")
+AnsAFD$valeurs.propres
+
+
+
+message("VECTEURS PROPRES")
+AnsAFD$vecteurs.propres
+
+
+
+message("COORDONNEES DES INDIVIDUS : PROJECTION AFD")
+AnsAFD$coordonees.individus
+
+```
+
+<br></br>
+
+```{r}
+message("CLASSE PREDITES AFD")
+AnsAFD$classe.predite
+  
+
+message("CLASSES PREDITES LDA")
+AnsLDA$classe.predite
+```
+
+<br></br>
+
+```{r}
+message("MATRICE DE CONFUSION AFD")
+AnsAFD$matrice.confusion
+message("MATRICE DE CONFUSION LDA")
+AnsLDA$matrice.confusion
+```
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;En calculant les matrices de confusion pour l'AFD et la LDA, on peut voir que leurs valeurs sont très proches et diffèrent légèrement. 
+
+<br></br>
+
+```{r}
+message("Taux de reussite AFD :")
+Accuracy(AnsAFD$matrice.confusion)
+message("Taux de reussite LDA:")
+Accuracy(AnsLDA$matrice.confusion)
+
+```
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Concernant les taux de réussite, on peut voir que pour ce nouveau jeu de données, les taux de réussite de l'AFD (69%) et de la LDA(75%) sont plus bas que ceux obtenus avec le premier jeu de données. Ceci pourrait s'expliquer par le fait que ce jeu de données est plus important que le précédent.\  
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;De plus, on peut noter que le taux de réussite de l'AFD est légèrement inférieur à celui de la LDA. On pourrait penser que les taux de réussite diffèrent ici à cause de la différence que nous avons trouvée dans nos matrice de confusion.
+
+
+<br></br>
+
+```{r}
+AnsAFD$graphique
+```
+
+<br></br>
+
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Contrairement au graphique obtenu avec le premier jeu de données, on a bien plus de fausses predictions car cela est dû au nombre de variables plus conséquent. De plus, on peut observer dans le graphe que certaines classes sont plus rapprochées. Donc il suffit qu’une observation appartenant à une certaine classe soit plus proche du centre de gravité d’une autre pour qu’elle soit identifiée comme celle étant la plus proche (car on regarde la distance euclidienne). C’est pour cela qu’à droite du graphe on a bien plus de fausses predictions que dans le graphe précédent : les classes se confondent.
+
+<br></br>
+
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Il faut cependant prendre du recul sur nos prédictions car nous traitons ici des données de santé, nous devons donc avoir les plus hauts taux de réussite possibles concernant la prédiction, au risque d'avoir des conséquences néfastes sur des patients.
+
+
+
+
+
+
+
+
+
+
+
